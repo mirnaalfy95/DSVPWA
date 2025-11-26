@@ -1,0 +1,56 @@
+Name: DAST Scanning
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  dast_scan:
+    name: OWASP ZAP DAST Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Build and run DSVPWA container
+        run: |
+          docker build -t dsvpwa .
+          docker run -d -p 65413:65413 --name dsvpwa dsvpwa
+          sleep 15 # Wait for the app to start
+      - name: Prepare report directory
+        run: |
+          mkdir -p zap-results
+          chmod 777 zap-results
+      - name: Run OWASP ZAP Baseline Scan
+        run: |
+          docker run --network host \
+            -v $(pwd)/zap-results:/zap/wrk/:rw \
+            ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+            -t http://localhost:65413 \
+            -J zap-report.json \
+            -x zap-report.xml \
+            -w zap-report.md \
+            -r zap-report.html \
+            -I || true
+      - name: ZAP Markdown Summary in Actions
+        if: always()
+        run: |
+          echo "## 🕷️ OWASP ZAP DAST Scan Summary" >> $GITHUBSTEPSUMMARY
+          if [ -f zap-results/zap-report.json ]; then
+            echo '| Risk | Alert | URL | Description |' >> $GITHUBSTEPSUMMARY
+            echo '|------|-------|-----|-------------|' >> $GITHUBSTEPSUMMARY
+            jq -r '.site[0].alerts[] |
+              "| (.riskdesc) | (.alert) | (.instances[0].uri // \"N/A\") | (.desc // \"N/A\") |"' zap-results/zap-report.json >> $GITHUBSTEPSUMMARY
+          else
+            echo "No ZAP report found." >> $GITHUBSTEPSUMMARY
+            - name: Upload ZAP Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-report
+          path: |
+            zap-results/zap-report.json
+            zap-results/zap-report.html
+            zap-results/zap-report.md
+            zap-results/zap-report.xml
+          
